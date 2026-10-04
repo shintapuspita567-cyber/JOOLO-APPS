@@ -5,11 +5,13 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 
 type Gender = "woman" | "man";
+type AgeGroup = "under-18" | "18-25" | "over-25";
 type LeaderboardPeriod = "daily" | "weekly" | "phase";
 type Leader = { handle: string; title: string; avatar: string; daily: number; weekly: number; phase: number };
 type BonusType = "ebook" | "tracker";
 type BonusResource = { title: string; category: string; description: string; detail: string; image: string; rows?: string[][] };
 type ProfileDialog = "edit" | "reset" | "certificate" | "feedback" | "logout" | null;
+type CompletionDialog = "evaluation" | "certificate" | null;
 type ProfileTheme = "dark" | "light";
 type Challenge = {
   id: string;
@@ -89,6 +91,8 @@ const initialChallenges: Challenge[] = [
   },
 ];
 
+const defaultJourneyStartDate = "2026-10-06";
+
 const quotes = [
   "Every moment is a fresh beginning.",
   "Small steps every day add up to big change.",
@@ -147,6 +151,7 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     back: <><path d="M19 12H5M12 19l-7-7 7-7" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.1.8-1.5 2.6-1.3-.5a7.6 7.6 0 0 1-1.5.9l-.2 1.4h-3l-.2-1.4a7.6 7.6 0 0 1-1.5-.9l-1.3.5-1.5-2.6 1.1-.8a7.2 7.2 0 0 1 0-1.8l-1.1-.8 1.5-2.6 1.3.5a7.6 7.6 0 0 1 1.5-.9l.2-1.4h3l.2 1.4a7.6 7.6 0 0 1 1.5.9l1.3-.5 1.5 2.6-1.1.8a7.2 7.2 0 0 1 0 1.8Z" transform="translate(-1 -1) scale(1.08)" /></>,
     certificate: <><circle cx="12" cy="8" r="5" /><path d="m8.5 12-1 9 4.5-2.5 4.5 2.5-1-9M10 8l1.3 1.3L14.5 6" /></>,
+    calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 11h18" /><path d="m9 16 2 2 4-4" /></>,
     book: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21V5.5ZM4 17a2.5 2.5 0 0 1 2.5-2.5H20M9 7h7M9 10h5" /></>,
     sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></>,
     moon: <><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z" /></>,
@@ -176,6 +181,11 @@ export default function Home() {
   const [gender, setGender] = useState<Gender>("woman");
   const [challenges, setChallenges] = useState<Challenge[]>(initialChallenges);
   const [selectedDay, setSelectedDay] = useState(1);
+  const [journeyStartDate, setJourneyStartDate] = useState(defaultJourneyStartDate);
+  const [dailyStardustByDay, setDailyStardustByDay] = useState<Record<string, number>>({});
+  const [challengeCompletionDays, setChallengeCompletionDays] = useState<Record<string, number>>({});
+  const [journeyStartDateDraft, setJourneyStartDateDraft] = useState(defaultJourneyStartDate);
+  const [journeyDatePickerOpen, setJourneyDatePickerOpen] = useState(false);
   const [coins, setCoins] = useState(267);
   const [modalOpen, setModalOpen] = useState(false);
   const [taskSchedule, setTaskSchedule] = useState<"daily" | "weekly" | "2x" | "3x">("daily");
@@ -192,6 +202,8 @@ export default function Home() {
   const [progressUnit, setProgressUnit] = useState("pages");
   const [progressCustomUnit, setProgressCustomUnit] = useState("");
   const [confirmChallengeDelete, setConfirmChallengeDelete] = useState(false);
+  const [completionDialog, setCompletionDialog] = useState<CompletionDialog>(null);
+  const [certificateClaimed, setCertificateClaimed] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [bonusOpen, setBonusOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -206,13 +218,34 @@ export default function Home() {
   const [leaderboardPage, setLeaderboardPage] = useState(0);
   const [toast, setToast] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [sessionActive, setSessionActive] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
+  const [saveUsername, setSaveUsername] = useState(false);
+  const [accessCodeOpen, setAccessCodeOpen] = useState(false);
+  const [onboardingName, setOnboardingName] = useState("");
+  const [onboardingGender, setOnboardingGender] = useState<Gender>("woman");
+  const [onboardingAge, setOnboardingAge] = useState<AgeGroup | "">("");
 
   useEffect(() => {
     setGender(readStored<Gender>("joolo-gender", "woman"));
     setChallenges(readStored<Challenge[]>("joolo-challenges", initialChallenges));
+    setCertificateClaimed(readStored<boolean>("joolo-certificate-claimed", false));
+    setJourneyStartDate(readStored<string>("joolo-start-date", defaultJourneyStartDate));
+    setDailyStardustByDay(readStored<Record<string, number>>("joolo-daily-stardust", {}));
+    setChallengeCompletionDays(readStored<Record<string, number>>("joolo-challenge-completion-days", {}));
     setCoins(readStored<number>("joolo-coins", 267));
     setProfileName(readStored<string>("joolo-profile-name", "Alex Pratama"));
     setProfileTheme(readStored<ProfileTheme>("joolo-profile-theme", "dark"));
+    const storedEmail = readStored<string>("joolo-login-email", "");
+    setLoginEmail(storedEmail);
+    setSessionActive(Boolean(storedEmail) || readStored<boolean>("joolo-session-active", false));
+    setOnboardingName(readStored<string>("joolo-profile-name", ""));
+    setOnboardingGender(readStored<Gender>("joolo-gender", "woman"));
+    setOnboardingAge(readStored<AgeGroup | "">("joolo-age-group", ""));
+    const savedUsername = readStored<string>("joolo-saved-username", "");
+    setEmailInput(savedUsername);
+    setSaveUsername(Boolean(savedUsername));
     setHydrated(true);
   }, []);
 
@@ -220,21 +253,57 @@ export default function Home() {
     if (!hydrated) return;
     localStorage.setItem("joolo-gender", JSON.stringify(gender));
     localStorage.setItem("joolo-challenges", JSON.stringify(challenges));
+    localStorage.setItem("joolo-certificate-claimed", JSON.stringify(certificateClaimed));
+    localStorage.setItem("joolo-start-date", JSON.stringify(journeyStartDate));
+    localStorage.setItem("joolo-daily-stardust", JSON.stringify(dailyStardustByDay));
+    localStorage.setItem("joolo-challenge-completion-days", JSON.stringify(challengeCompletionDays));
     localStorage.setItem("joolo-coins", JSON.stringify(coins));
     localStorage.setItem("joolo-profile-name", JSON.stringify(profileName));
     localStorage.setItem("joolo-profile-theme", JSON.stringify(profileTheme));
-  }, [gender, challenges, coins, profileName, profileTheme, hydrated]);
+    localStorage.setItem("joolo-login-email", JSON.stringify(loginEmail));
+    localStorage.setItem("joolo-session-active", JSON.stringify(sessionActive));
+  }, [gender, challenges, certificateClaimed, journeyStartDate, dailyStardustByDay, challengeCompletionDays, coins, profileName, profileTheme, loginEmail, sessionActive, hydrated]);
 
   const completed = challenges.filter((challenge) => challenge.done).length;
+  const journeyStartDateLabel = new Date(`${journeyStartDate}T12:00:00`).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
   const dayNumber = Math.max(selectedDay, 1);
+  const canClaimCertificate = dayNumber === 40 && challenges.length > 0 && completed === challenges.length;
+  const completedStardust = challenges.reduce((total, challenge) => total + (challenge.done ? challenge.reward : 0), 0);
   const progress = Math.round((completed / Math.max(challenges.length, 1)) * 100);
   const quote = useMemo(() => quotes[(dayNumber - 1) % quotes.length], [dayNumber]);
   const rankedLeaders = useMemo(
     () => [...leaderboard].sort((a, b) => b[leaderboardPeriod] - a[leaderboardPeriod]),
     [leaderboardPeriod],
   );
+  const dailyLeaders = useMemo(
+    () => [...leaderboard].sort((a, b) => b.daily - a.daily).slice(0, 3),
+    [],
+  );
   const topLeaders = rankedLeaders.slice(0, 3);
   const pageLeaders = rankedLeaders.slice(3 + leaderboardPage * 7, 10 + leaderboardPage * 7);
+  const chartBounds = { left: 72, top: 20, width: 820, height: 270 };
+  const chartMaxValue = Math.max(1000, ...dailyLeaders.map((leader) => leader.daily), ...Object.values(dailyStardustByDay));
+  const chartYMax = Math.ceil(chartMaxValue / 200) * 200;
+  const chartX = (day: number) => chartBounds.left + ((day - 1) / 39) * chartBounds.width;
+  const chartY = (score: number) => chartBounds.top + chartBounds.height - (score / chartYMax) * chartBounds.height;
+  const userRecordedPoints = Array.from({ length: 40 }, (_, index) => ({
+    day: index + 1,
+    score: dailyStardustByDay[String(index + 1)],
+  })).filter((point): point is { day: number; score: number } => typeof point.score === "number");
+  const userTrendSegments: Array<Array<{ day: number; score: number }>> = [];
+  userRecordedPoints.forEach((point) => {
+    const lastSegment = userTrendSegments[userTrendSegments.length - 1];
+    if (lastSegment && lastSegment[lastSegment.length - 1].day === point.day - 1) {
+      lastSegment.push(point);
+    } else {
+      userTrendSegments.push([point]);
+    }
+  });
+  const userTotalRecordedStardust = Object.values(dailyStardustByDay).reduce((total, score) => total + score, 0);
   const visibleBonusResources = bonusResources[bonusType].filter((resource) =>
     `${resource.title} ${resource.category} ${resource.description}`.toLowerCase().includes(bonusSearch.trim().toLowerCase()),
   );
@@ -255,6 +324,18 @@ export default function Home() {
     const done = !target.done;
     setChallenges((items) => items.map((item) => item.id === id ? { ...item, done } : item));
     setCoins((value) => Math.max(0, value + (done ? target.reward : -target.reward)));
+    if (done) {
+      setChallengeCompletionDays((days) => ({ ...days, [id]: selectedDay }));
+      setDailyStardustByDay((days) => ({ ...days, [selectedDay]: (days[String(selectedDay)] ?? 0) + target.reward }));
+    } else {
+      const earnedOnDay = challengeCompletionDays[id] ?? selectedDay;
+      setDailyStardustByDay((days) => ({ ...days, [earnedOnDay]: Math.max(0, (days[String(earnedOnDay)] ?? 0) - target.reward) }));
+      setChallengeCompletionDays((days) => {
+        const nextDays = { ...days };
+        delete nextDays[id];
+        return nextDays;
+      });
+    }
   }
 
   function openProgressEditor(challenge: Challenge) {
@@ -309,7 +390,11 @@ export default function Home() {
       targetAmount: targetAmount ?? undefined,
       targetUnit: targetAmount === null ? undefined : targetUnit,
     } : item));
-    if (challenge.done) setCoins((value) => Math.max(0, value + reward - challenge.reward));
+    if (challenge.done) {
+      setCoins((value) => Math.max(0, value + reward - challenge.reward));
+      const earnedOnDay = challengeCompletionDays[challenge.id] ?? selectedDay;
+      setDailyStardustByDay((days) => ({ ...days, [earnedOnDay]: Math.max(0, (days[String(earnedOnDay)] ?? 0) + reward - challenge.reward) }));
+    }
     setProgressChallengeId(null);
     notify("Challenge progress updated.");
   }
@@ -318,7 +403,16 @@ export default function Home() {
     const challenge = challenges.find((item) => item.id === progressChallengeId);
     if (!challenge) return;
     setChallenges((items) => items.filter((item) => item.id !== challenge.id));
-    if (challenge.done) setCoins((value) => Math.max(0, value - challenge.reward));
+    if (challenge.done) {
+      setCoins((value) => Math.max(0, value - challenge.reward));
+      const earnedOnDay = challengeCompletionDays[challenge.id] ?? selectedDay;
+      setDailyStardustByDay((days) => ({ ...days, [earnedOnDay]: Math.max(0, (days[String(earnedOnDay)] ?? 0) - challenge.reward) }));
+      setChallengeCompletionDays((days) => {
+        const nextDays = { ...days };
+        delete nextDays[challenge.id];
+        return nextDays;
+      });
+    }
     setProgressChallengeId(null);
     setConfirmChallengeDelete(false);
     notify("Challenge removed.");
@@ -410,14 +504,82 @@ export default function Home() {
 
   function resetJourney() {
     setChallenges(initialChallenges);
+    setCertificateClaimed(false);
     setSelectedDay(1);
+    setJourneyStartDate(defaultJourneyStartDate);
+    setDailyStardustByDay({});
+    setChallengeCompletionDays({});
     setCoins(267);
     setGender("woman");
     setProfileName("Alex Pratama");
     setProfileTheme("dark");
+    setOnboardingAge("");
     setProfileDialog(null);
-    ["joolo-gender", "joolo-challenges", "joolo-coins", "joolo-profile-name", "joolo-profile-theme"].forEach((key) => localStorage.removeItem(key));
+    ["joolo-gender", "joolo-challenges", "joolo-certificate-claimed", "joolo-start-date", "joolo-daily-stardust", "joolo-challenge-completion-days", "joolo-coins", "joolo-profile-name", "joolo-profile-theme", "joolo-age-group"].forEach((key) => localStorage.removeItem(key));
     notify("Your journey data has been reset.");
+  }
+
+  function openJourneyDatePicker() {
+    setJourneyStartDateDraft(journeyStartDate);
+    setJourneyDatePickerOpen(true);
+  }
+
+  function saveJourneyStartDate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!journeyStartDateDraft) return;
+    setJourneyStartDate(journeyStartDateDraft);
+    setJourneyDatePickerOpen(false);
+    notify("Challenge start date updated.");
+  }
+
+  function logIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const email = String(new FormData(event.currentTarget).get("email") ?? "").trim().toLowerCase();
+    if (!email) return;
+    if (saveUsername) {
+      localStorage.setItem("joolo-saved-username", JSON.stringify(email));
+    } else {
+      localStorage.removeItem("joolo-saved-username");
+    }
+    setAccessCodeOpen(false);
+    setLoginEmail(email);
+    setSessionActive(true);
+  }
+
+  function toggleSaveUsername(checked: boolean) {
+    setSaveUsername(checked);
+    if (!checked) localStorage.removeItem("joolo-saved-username");
+  }
+
+  function startOnboarding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const name = String(data.get("fullName") ?? "").trim();
+    const ageGroup = String(data.get("ageGroup") ?? "") as AgeGroup;
+    const accessCode = String(data.get("accessCode") ?? "").trim();
+    if (!name || !accessCode || !ageGroup) return;
+    setProfileName(name);
+    setGender(onboardingGender);
+    setOnboardingName(name);
+    setOnboardingAge(ageGroup);
+    setAccessCodeOpen(false);
+    setLoginEmail("");
+    setSessionActive(true);
+    localStorage.setItem("joolo-profile-name", JSON.stringify(name));
+    localStorage.setItem("joolo-gender", JSON.stringify(onboardingGender));
+    localStorage.setItem("joolo-age-group", JSON.stringify(ageGroup));
+    localStorage.setItem("joolo-session-active", JSON.stringify(true));
+  }
+
+  function logOut() {
+    setProfileDialog(null);
+    setProfileOpen(false);
+    setLoginEmail("");
+    setSessionActive(false);
+    setAccessCodeOpen(false);
+    if (!saveUsername) setEmailInput("");
+    localStorage.removeItem("joolo-login-email");
+    localStorage.setItem("joolo-session-active", JSON.stringify(false));
   }
 
   async function downloadBonus(resource: BonusResource, type: BonusType) {
@@ -506,6 +668,114 @@ export default function Home() {
     notify(`${resource.title} is ready to download.`);
   }
 
+  if (!hydrated) {
+    return (
+      <main className="cosmos login-screen">
+        <div className="stars stars-one" /><div className="stars stars-two" />
+        <div className="nebula nebula-left" /><div className="nebula nebula-right" />
+        <p className="login-loading" role="status">Opening your orbit...</p>
+      </main>
+    );
+  }
+
+  if (!sessionActive && accessCodeOpen) {
+    return (
+      <main className="cosmos login-screen onboarding-screen">
+        <div className="stars stars-one" /><div className="stars stars-two" />
+        <div className="nebula nebula-left" /><div className="nebula nebula-right" />
+        <section className="login-card onboarding-card" aria-labelledby="onboarding-title">
+          <button className="onboarding-back" type="button" onClick={() => setAccessCodeOpen(false)}><Icon name="arrow" size={16} /> Back to log in</button>
+          <a href="#onboarding-title" className="brand login-brand" aria-label="JOolo">
+            <span className="brand-mark">✦</span>
+            <span>JO<span className="brand-muted">O</span>LO<span className="brand-dot">.</span></span>
+          </a>
+          <div className="eyebrow login-eyebrow"><span className="eyebrow-line" /> YOUR COSMIC JOURNEY</div>
+          <h1 id="onboarding-title">Let’s meet <span>you.</span></h1>
+          <p className="login-copy">A few details will help us personalize your 40-day journey.</p>
+          <form className="onboarding-form" id="onboarding-form" onSubmit={startOnboarding}>
+            <label htmlFor="onboarding-name">FULL NAME</label>
+            <input id="onboarding-name" name="fullName" type="text" autoComplete="name" placeholder="Enter your full name" maxLength={60} value={onboardingName} onChange={(event) => setOnboardingName(event.target.value)} required />
+            <fieldset className="onboarding-fieldset">
+              <legend>GENDER</legend>
+              <div className="onboarding-gender-options" role="group" aria-label="Choose gender">
+                {(["woman", "man"] as const).map((option) => <button key={option} type="button" className={`onboarding-gender-option ${onboardingGender === option ? "selected" : ""}`} aria-pressed={onboardingGender === option} onClick={() => setOnboardingGender(option)}>
+                  <span className={`gender-symbol ${option}`} aria-hidden="true">{option === "woman" ? "♀" : "♂"}</span>
+                  <span>{option === "woman" ? "Woman" : "Man"}</span>
+                </button>)}
+              </div>
+            </fieldset>
+            <label htmlFor="onboarding-age">AGE</label>
+            <select id="onboarding-age" name="ageGroup" value={onboardingAge} onChange={(event) => setOnboardingAge(event.target.value as AgeGroup | "")} required>
+              <option value="" disabled>Select your age group</option>
+              <option value="under-18">&lt;18 years old</option>
+              <option value="18-25">18-25 years old</option>
+              <option value="over-25">&gt;25 years old</option>
+            </select>
+            <label htmlFor="onboarding-access-code">ACCESS CODE</label>
+            <input id="onboarding-access-code" name="accessCode" type="text" autoComplete="one-time-code" placeholder="Enter your access code" required />
+            <p className="onboarding-demo-note">Demo preview: the access code is required here but isn’t verified by a server.</p>
+            <button className="login-submit onboarding-submit" type="submit">START ACTION <Icon name="arrow" size={17} /></button>
+          </form>
+          <div className="login-footer"><span>✦</span> Small steps. Stellar progress.</div>
+        </section>
+      </main>
+    );
+  }
+
+  if (!sessionActive) {
+    return (
+      <main className="cosmos login-screen">
+        <div className="stars stars-one" /><div className="stars stars-two" />
+        <div className="nebula nebula-left" /><div className="nebula nebula-right" />
+        <section className="login-card" aria-labelledby="login-title">
+          <a href="#login-title" className="brand login-brand" aria-label="JOolo">
+            <span className="brand-mark">✦</span>
+            <span>JO<span className="brand-muted">O</span>LO<span className="brand-dot">.</span></span>
+          </a>
+          <div className="login-orbit" aria-hidden="true"><span>✦</span><i /></div>
+          <div className="eyebrow login-eyebrow"><span className="eyebrow-line" /> YOUR NEXT CHAPTER STARTS HERE</div>
+          <h1 id="login-title">Your journey<br />starts <span>within.</span></h1>
+          <p className="login-copy">Enter your email to step into your 40-day cosmic growth journey.</p>
+          <form className="login-form" onSubmit={logIn}>
+            <label htmlFor="login-email">EMAIL ADDRESS</label>
+            <input
+              id="login-email"
+              name="email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={emailInput}
+              onChange={(event) => setEmailInput(event.target.value)}
+              required
+            />
+            <label className="save-username" htmlFor="save-username">
+              <input
+                id="save-username"
+                type="checkbox"
+                checked={saveUsername}
+                onChange={(event) => toggleSaveUsername(event.target.checked)}
+              />
+              <span className="save-username-check" aria-hidden="true" />
+              <span>Save username</span>
+            </label>
+            <button className="login-submit" type="submit">LOG IN <Icon name="arrow" size={17} /></button>
+          </form>
+          <button
+            className="login-access-toggle"
+            type="button"
+            aria-expanded={accessCodeOpen}
+            aria-controls="onboarding-form"
+            onClick={() => { setAccessCodeOpen(true); setOnboardingName(profileName === "Alex Pratama" ? "" : profileName); setOnboardingGender(gender); }}
+          >
+            INPUT ACCESS CODE
+          </button>
+          <p className="login-note">Your email is remembered on this device only when Save username is selected.</p>
+          <div className="login-footer"><span>✦</span> Small steps. Stellar progress.</div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="cosmos">
       <div className="stars stars-one" /><div className="stars stars-two" />
@@ -546,7 +816,12 @@ export default function Home() {
               <div className="hearts" aria-label="3 day streak"><span>✦</span><span>✦</span><span>✦</span><span className="dim">✦</span><span className="dim">✦</span></div>
               <small>Keep showing up. It’s working.</small>
             </div>
-            <div className="overview-card start-card"><span className="start-dot" /> JOURNEY STARTED <strong>06 Oct 2026</strong></div>
+            <button className="overview-card start-card start-date-control" type="button" onClick={openJourneyDatePicker} aria-label={`Change challenge start date, currently ${journeyStartDateLabel}`}>
+              <span className="start-dot" />
+              <span className="start-date-caption">JOURNEY STARTED</span>
+              <strong>{journeyStartDateLabel}</strong>
+              <span className="start-date-edit">Change</span>
+            </button>
           </div>
         </section>
 
@@ -595,6 +870,21 @@ export default function Home() {
               </article>;
             })}
           </div>
+          {dayNumber === 40 && <div className={`day-40-actions ${canClaimCertificate ? "unlocked" : "locked"}`} aria-label="40-day challenge completion">
+            {!canClaimCertificate && <p className="day-40-lock-note">Complete all daily quests to unlock these actions.</p>}
+            <button className="day-40-action-button evaluation-action" type="button" disabled={!canClaimCertificate} title={canClaimCertificate ? "View your 40-day evaluation results" : "Complete all quests to unlock"} onClick={() => {
+              if (canClaimCertificate) setCompletionDialog("evaluation");
+            }}>
+              <Icon name="sparkles" size={19} /> 40-Day Evaluation Results <Icon name="arrow" size={17} />
+            </button>
+            <button className={`day-40-action-button certificate-action ${certificateClaimed ? "claimed" : ""}`} type="button" disabled={!canClaimCertificate} title={canClaimCertificate ? "Claim your completion certificate" : "Complete all quests to unlock"} onClick={() => {
+              if (!canClaimCertificate) return;
+              if (!certificateClaimed) setCertificateClaimed(true);
+              setCompletionDialog("certificate");
+            }}>
+              <Icon name="certificate" size={19} /> {certificateClaimed ? "Certificate Claimed" : "Claim Certificate"} <Icon name="arrow" size={17} />
+            </button>
+          </div>}
         </section>
 
         <section className="rewards-panel glass-panel" id="rewards">
@@ -665,7 +955,7 @@ export default function Home() {
           </section>
           <section className="profile-panel">
             <span className="profile-section-label">ACHIEVEMENTS</span>
-            <button className="profile-action-row certificate-row" onClick={() => setProfileDialog("certificate")}><span className="profile-row-icon"><Icon name="certificate" size={25} /></span><strong>Claim Certificate</strong><span className="certificate-progress">COMPLETE 40 DAYS</span><Icon name="chevron" size={21} /></button>
+            <button className="profile-action-row certificate-row" disabled={!canClaimCertificate} onClick={() => canClaimCertificate && setCompletionDialog("certificate")}><span className="profile-row-icon"><Icon name="certificate" size={25} /></span><strong>Claim Certificate</strong><span className="certificate-progress">{certificateClaimed ? "CLAIMED" : canClaimCertificate ? "COMPLETE 40 DAYS" : "AVAILABLE ON DAY 40"}</span><Icon name="chevron" size={21} /></button>
           </section>
           <section className="profile-panel profile-data-panel">
             <span className="profile-section-label">DATA</span>
@@ -692,11 +982,41 @@ export default function Home() {
             <div className="modal-icon"><Icon name={profileDialog === "reset" ? "trash" : profileDialog === "certificate" ? "certificate" : profileDialog === "logout" ? "logout" : profileDialog === "feedback" ? "message" : "sparkles"} size={25} /></div>
             {profileDialog === "edit" && <><span className="eyebrow">MAKE IT YOURS</span><h2 id="profile-dialog-title">Edit your profile.</h2><p>Choose the name you want to see on your journey.</p><form onSubmit={(event) => { event.preventDefault(); const value = String(new FormData(event.currentTarget).get("name") ?? "").trim(); if (value) setProfileName(value); setProfileDialog(null); notify("Profile updated."); }}><label htmlFor="profile-name">Display name</label><input id="profile-name" name="name" defaultValue={profileName} maxLength={32} required /><button className="primary-button submit-button" type="submit">Save profile <Icon name="check" size={16} /></button></form></>}
             {profileDialog === "reset" && <><span className="eyebrow">A FRESH ORBIT</span><h2 id="profile-dialog-title">Reset your journey?</h2><p>This clears your saved quests, stardust, and preferences on this device. This can’t be undone.</p><div className="profile-dialog-actions"><button className="outline-button" onClick={() => setProfileDialog(null)}>Keep my progress</button><button className="profile-danger-button" onClick={resetJourney}>Reset everything</button></div></>}
-            {profileDialog === "certificate" && <><span className="eyebrow">YOUR NEXT MILESTONE</span><h2 id="profile-dialog-title">One day at a time.</h2><p>Keep showing up for your daily quests. Certificate claiming will be available when full 40-day check-in tracking is enabled.</p><button className="primary-button submit-button" onClick={() => { setProfileDialog(null); setProfileOpen(false); setSelectedDay(40); document.getElementById("calendar")?.scrollIntoView({ behavior: "smooth" }); }}>See day 40 <Icon name="arrow" size={16} /></button></>}
+            {profileDialog === "certificate" && <><span className="eyebrow">YOUR NEXT MILESTONE</span><h2 id="profile-dialog-title">Your 40-day orbit awaits.</h2><p>Reach Day 40 and complete all your daily quests to unlock your certificate.</p><button className="primary-button submit-button" onClick={() => { setProfileDialog(null); setProfileOpen(false); setSelectedDay(40); document.getElementById("calendar")?.scrollIntoView({ behavior: "smooth" }); }}>Go to day 40 <Icon name="arrow" size={16} /></button></>}
             {profileDialog === "feedback" && <><span className="eyebrow">HELP US GROW</span><h2 id="profile-dialog-title">Send a little feedback.</h2><p>What could make your next orbit even better?</p><form onSubmit={(event) => { event.preventDefault(); setProfileDialog(null); notify("Thanks for helping JOolo grow!"); }}><label htmlFor="feedback-message">Your feedback</label><textarea id="feedback-message" name="feedback" rows={4} maxLength={500} placeholder="Share an idea or tell us how it’s going..." required /><button className="primary-button submit-button" type="submit">Send feedback <Icon name="arrow" size={16} /></button></form></>}
-            {profileDialog === "logout" && <><span className="eyebrow">DEMO SESSION</span><h2 id="profile-dialog-title">Ready to head out?</h2><p>This preview doesn’t use account sign-in, so your saved journey stays on this device. You can safely return to your challenges.</p><button className="primary-button submit-button" onClick={() => { setProfileDialog(null); setProfileOpen(false); notify("Welcome back to your journey."); }}>Return to journey <Icon name="arrow" size={16} /></button></>}
+            {profileDialog === "logout" && <><span className="eyebrow">DEMO SESSION</span><h2 id="profile-dialog-title">Ready to head out?</h2><p>You’ll return to the email login screen. Your journey progress will stay saved on this device.</p><button className="primary-button submit-button" onClick={logOut}>Log out <Icon name="logout" size={16} /></button></>}
           </section>
         </div>}
+      </div>}
+
+      {completionDialog && <div className="modal-backdrop completion-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCompletionDialog(null); }}>
+        <section className="modal glass-panel completion-dialog" role="dialog" aria-modal="true" aria-labelledby="completion-dialog-title">
+          <button className="modal-close" type="button" onClick={() => setCompletionDialog(null)} aria-label="Close"><Icon name="close" size={19} /></button>
+          <div className="modal-icon"><Icon name={completionDialog === "evaluation" ? "sparkles" : "certificate"} size={25} /></div>
+          {completionDialog === "evaluation" ? <>
+            <span className="eyebrow">YOUR JOURNEY, REFLECTED</span>
+            <h2 id="completion-dialog-title">40-day evaluation.</h2>
+            <p>You made it to the final day and completed every quest in your challenge.</p>
+            <div className="evaluation-stats">
+              <div><span>QUESTS COMPLETED</span><strong>{completed} / {challenges.length}</strong></div>
+              <div><span>STARDUST EARNED</span><strong>✦ {completedStardust.toLocaleString()}</strong></div>
+              <div><span>JOURNEY</span><strong>40 days</strong></div>
+            </div>
+            <div className="evaluation-quest-list">{challenges.map((challenge) => <div key={challenge.id}><span className="evaluation-check"><Icon name="check" size={14} /></span><span>{challenge.title}</span><strong>✦ {challenge.reward}</strong></div>)}</div>
+            <button className="primary-button submit-button" type="button" onClick={() => setCompletionDialog(null)}>Celebrate your progress <Icon name="sparkles" size={16} /></button>
+          </> : <>
+            <span className="eyebrow">A MILESTONE WORTH CELEBRATING</span>
+            <div className="claimed-certificate">
+              <span className="certificate-star">✦</span>
+              <span className="certificate-overline">JOOLO · CERTIFICATE OF COMPLETION</span>
+              <h2 id="completion-dialog-title">{certificateClaimed ? "Certificate claimed!" : "Congratulations!"}</h2>
+              <p>This recognizes <strong>{profileName}</strong> for completing the 40-day cosmic growth challenge.</p>
+              <span className="certificate-days">40 DAYS · {completed} QUESTS COMPLETE</span>
+            </div>
+            <p className="certificate-claim-note">{certificateClaimed ? "Your milestone is saved in your journey on this device." : "Your 40-day journey is complete. This certificate has been added to your milestones."}</p>
+            <button className="primary-button submit-button" type="button" onClick={() => setCompletionDialog(null)}>Continue your journey <Icon name="arrow" size={16} /></button>
+          </>}
+        </section>
       </div>}
 
       {bonusOpen && <div className="bonus-screen">
@@ -751,33 +1071,119 @@ export default function Home() {
           <div className="leaderboard-tabs" role="tablist" aria-label="Leaderboard period">
             {(["daily", "weekly", "phase"] as const).map((period) => <button key={period} className={leaderboardPeriod === period ? "selected" : ""} role="tab" aria-selected={leaderboardPeriod === period} onClick={() => { setLeaderboardPeriod(period); setLeaderboardPage(0); }}>{period}</button>)}
           </div>
-          <section className="podium" aria-label="Top three players">
-            {[{ leader: topLeaders[1], rank: 2 }, { leader: topLeaders[0], rank: 1 }, { leader: topLeaders[2], rank: 3 }].map(({ leader, rank }) => <article className={`podium-player podium-${rank}`} key={leader.handle}>
-              <div className="podium-rank">{rank === 1 && <span className="crown">♛</span>}{rank}</div>
-              <div className="podium-avatar-wrap"><img src={`https://images.unsplash.com/${leader.avatar}?auto=format&fit=crop&w=240&h=240&q=80`} alt="" className="podium-avatar" /><span className="avatar-glow" /></div>
-              <strong>{leader.handle}</strong><span className="podium-title">{leader.title}</span>
-              <div className="podium-score"><span className="leader-coin">✦</span>{leader[leaderboardPeriod].toLocaleString()}</div>
-            </article>)}
-          </section>
-          <section className="leader-list" aria-label="Leaderboard ranks">
-            {pageLeaders.map((leader, index) => {
-              const rank = index + 4 + leaderboardPage * 7;
-              const isYou = leader.handle === "@you";
-              return <article className={`leader-list-row ${isYou ? "you" : ""}`} key={leader.handle}>
-                <span className="list-rank">{rank}</span>
-                <img className="list-avatar" src={`https://images.unsplash.com/${leader.avatar}?auto=format&fit=crop&w=100&h=100&q=75`} alt="" />
-                <span className="list-player">{leader.handle}<small>{isYou ? "Your cosmic journey" : leader.title}</small></span>
-                <span className="list-score"><span className="leader-coin">✦</span><b>{leader[leaderboardPeriod].toLocaleString()}</b></span>
-              </article>;
-            })}
-          </section>
-          <div className="leaderboard-pagination">
-            {leaderboardPage > 0 && <button className="page-button previous" onClick={() => setLeaderboardPage((page) => Math.max(0, page - 1))}><Icon name="arrow" size={17} /> PREVIOUS</button>}
-            <span>PAGE {leaderboardPage + 1} <i /> 2</span>
-            {leaderboardPage === 0 && <button className="page-button" onClick={() => setLeaderboardPage(1)}>NEXT <Icon name="arrow" size={17} /></button>}
-            {leaderboardPage === 1 && <button className="page-button" onClick={() => { setLeaderboardOpen(false); jumpToChallenges(); }}>BACK TO QUESTS <Icon name="arrow" size={17} /></button>}
-          </div>
+          {leaderboardPeriod === "phase" ? <section className="phase-progress-dashboard" aria-label="40-day progress dashboard">
+            <div className="phase-progress-heading">
+              <div>
+                <span className="eyebrow"><span className="eyebrow-line" /> YOUR 40-DAY JOURNEY</span>
+                <h2>Progress <span>in orbit.</span></h2>
+                <p>Track your daily stardust and compare it with today’s Daily leaderboard leaders.</p>
+              </div>
+              <div className="phase-progress-stats">
+                <div><span>STARDUST EARNED</span><strong>✦ {userTotalRecordedStardust.toLocaleString()}</strong></div>
+                <div><span>DAY {selectedDay} SCORE</span><strong>✦ {(dailyStardustByDay[String(selectedDay)] ?? 0).toLocaleString()}</strong></div>
+              </div>
+            </div>
+            <div className="progress-chart-panel">
+              <div className="progress-chart-topline">
+                <div><span className="chart-kicker">DAILY STARDUST</span><h3>Day-by-day progress</h3></div>
+                <span className="chart-unit">STARDUST / DAY</span>
+              </div>
+              <div className="progress-chart-scroll">
+                <svg className="progress-chart" viewBox="0 0 930 345" role="img" aria-labelledby="progress-chart-title progress-chart-description">
+                  <title id="progress-chart-title">Daily stardust progress over 40 challenge days</title>
+                  <desc id="progress-chart-description">Your recorded daily stardust is shown with a cyan line. Gold, pink, and purple horizontal lines show current daily benchmark scores for the top three leaderboard players.</desc>
+                  {Array.from({ length: 6 }, (_, index) => {
+                    const score = Math.round((chartYMax / 5) * (5 - index));
+                    const y = chartBounds.top + (chartBounds.height / 5) * index;
+                    return <g key={`y-${score}`}>
+                      <line className="chart-grid-line" x1={chartBounds.left} x2={chartBounds.left + chartBounds.width} y1={y} y2={y} />
+                      <text className="chart-axis-label" x={chartBounds.left - 12} y={y + 4} textAnchor="end">{score.toLocaleString()}</text>
+                    </g>;
+                  })}
+                  {[1, 5, 10, 15, 20, 25, 30, 35, 40].map((day) => <g key={`x-${day}`}>
+                    <line className="chart-x-tick" x1={chartX(day)} x2={chartX(day)} y1={chartBounds.top + chartBounds.height} y2={chartBounds.top + chartBounds.height + 5} />
+                    <text className="chart-axis-label" x={chartX(day)} y={chartBounds.top + chartBounds.height + 23} textAnchor="middle">Day {day}</text>
+                  </g>)}
+                  <line className="chart-axis-line" x1={chartBounds.left} x2={chartBounds.left} y1={chartBounds.top} y2={chartBounds.top + chartBounds.height} />
+                  <line className="chart-axis-line" x1={chartBounds.left} x2={chartBounds.left + chartBounds.width} y1={chartBounds.top + chartBounds.height} y2={chartBounds.top + chartBounds.height} />
+                  {dailyLeaders.map((leader, index) => {
+                    const colorClass = `leader-benchmark-${index + 1}`;
+                    const y = chartY(leader.daily);
+                    return <g className={colorClass} key={leader.handle}>
+                      <line className="leader-benchmark-line" x1={chartBounds.left} x2={chartBounds.left + chartBounds.width} y1={y} y2={y} />
+                      <circle className="leader-benchmark-dot" cx={chartBounds.left + chartBounds.width} cy={y} r="4" />
+                    </g>;
+                  })}
+                  {userTrendSegments.map((segment, index) => <polyline
+                    className="user-progress-line"
+                    key={`user-line-${index}`}
+                    points={segment.map((point) => `${chartX(point.day)},${chartY(point.score)}`).join(" ")}
+                  />)}
+                  {userRecordedPoints.map((point) => <circle className="user-progress-point" key={`user-point-${point.day}`} cx={chartX(point.day)} cy={chartY(point.score)} r="5">
+                    <title>{`Day ${point.day}: ${point.score} stardust earned`}</title>
+                  </circle>)}
+                </svg>
+              </div>
+              <div className="chart-legend" aria-label="Chart lines">
+                <span className="chart-legend-item chart-user-legend"><i /> You · daily stardust</span>
+                {dailyLeaders.map((leader, index) => <span className={`chart-legend-item chart-leader-legend leader-benchmark-${index + 1}`} key={leader.handle}>
+                  <i /> #{index + 1} {leader.handle} · {leader.daily.toLocaleString()} benchmark
+                </span>)}
+              </div>
+              <p className="chart-data-note">Your line records stardust from quests you complete from now on; unrecorded days are left blank. Leader lines are today’s Daily scores used as comparison benchmarks, not historical records.</p>
+            </div>
+          </section> : <>
+            <section className="podium" aria-label="Top three players">
+              {[{ leader: topLeaders[1], rank: 2 }, { leader: topLeaders[0], rank: 1 }, { leader: topLeaders[2], rank: 3 }].map(({ leader, rank }) => <article className={`podium-player podium-${rank}`} key={leader.handle}>
+                <div className="podium-rank">{rank === 1 && <span className="crown">♛</span>}{rank}</div>
+                <div className="podium-avatar-wrap"><img src={`https://images.unsplash.com/${leader.avatar}?auto=format&fit=crop&w=240&h=240&q=80`} alt="" className="podium-avatar" /><span className="avatar-glow" /></div>
+                <strong>{leader.handle}</strong><span className="podium-title">{leader.title}</span>
+                <div className="podium-score"><span className="leader-coin">✦</span>{leader[leaderboardPeriod].toLocaleString()}</div>
+              </article>)}
+            </section>
+            <section className="leader-list" aria-label="Leaderboard ranks">
+              {pageLeaders.map((leader, index) => {
+                const rank = index + 4 + leaderboardPage * 7;
+                const isYou = leader.handle === "@you";
+                return <article className={`leader-list-row ${isYou ? "you" : ""}`} key={leader.handle}>
+                  <span className="list-rank">{rank}</span>
+                  <img className="list-avatar" src={`https://images.unsplash.com/${leader.avatar}?auto=format&fit=crop&w=100&h=100&q=75`} alt="" />
+                  <span className="list-player">{leader.handle}<small>{isYou ? "Your cosmic journey" : leader.title}</small></span>
+                  <span className="list-score"><span className="leader-coin">✦</span><b>{leader[leaderboardPeriod].toLocaleString()}</b></span>
+                </article>;
+              })}
+            </section>
+            <div className="leaderboard-pagination">
+              {leaderboardPage > 0 && <button className="page-button previous" onClick={() => setLeaderboardPage((page) => Math.max(0, page - 1))}><Icon name="arrow" size={17} /> PREVIOUS</button>}
+              <span>PAGE {leaderboardPage + 1} <i /> 2</span>
+              {leaderboardPage === 0 && <button className="page-button" onClick={() => setLeaderboardPage(1)}>NEXT <Icon name="arrow" size={17} /></button>}
+              {leaderboardPage === 1 && <button className="page-button" onClick={() => { setLeaderboardOpen(false); jumpToChallenges(); }}>BACK TO QUESTS <Icon name="arrow" size={17} /></button>}
+            </div>
+          </>}
         </main>
+      </div>}
+      {journeyDatePickerOpen && <div className="modal-backdrop start-date-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setJourneyDatePickerOpen(false); }}>
+        <section className="modal glass-panel start-date-dialog" role="dialog" aria-modal="true" aria-labelledby="start-date-title">
+          <button className="modal-close" type="button" onClick={() => setJourneyDatePickerOpen(false)} aria-label="Close date picker"><Icon name="close" size={19} /></button>
+          <div className="modal-icon"><Icon name="calendar" size={25} /></div>
+          <span className="eyebrow">YOUR 40-DAY CHALLENGE</span>
+          <h2 id="start-date-title">Choose your start date.</h2>
+          <p>Your journey day one will begin on the date you choose.</p>
+          <form onSubmit={saveJourneyStartDate}>
+            <label htmlFor="journey-start-date">CHALLENGE START DATE</label>
+            <input
+              id="journey-start-date"
+              type="date"
+              value={journeyStartDateDraft}
+              onChange={(event) => setJourneyStartDateDraft(event.target.value)}
+              required
+            />
+            <div className="start-date-dialog-actions">
+              <button className="outline-button" type="button" onClick={() => setJourneyDatePickerOpen(false)}>Cancel</button>
+              <button className="primary-button" type="submit">Save start date <Icon name="check" size={16} /></button>
+            </div>
+          </form>
+        </section>
       </div>}
       {toast && <div className="toast" role="status"><span>✦</span>{toast}</div>}
     </main>
