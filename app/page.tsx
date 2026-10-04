@@ -344,13 +344,15 @@ export default function Home() {
     const frequency = challenge.frequency ?? Number(schedule.match(/^(\d+)\s*x/i)?.[1]);
     const targetMatch = challenge.detail.match(/0\s*\/\s*([\d.]+)\s+([^·]+)/i);
     const levelMatch = challenge.detail.match(/\b(Easy|Medium|Hard)\b/i)?.[1];
+    const storedUnit = challenge.targetUnit ?? targetMatch?.[2].trim() ?? "pages";
+    const knownUnits = ["pages", "km", "minutes", "reps", "glasses", "times"];
     setProgressChallengeId(challenge.id);
     setProgressTitle(challenge.title);
-    setProgressSchedule(schedule === "daily" ? "daily" : schedule === "2x/week" || frequency === 2 ? "2x" : schedule === "3x/week" || frequency === 3 ? "3x" : "weekly");
+    setProgressSchedule(schedule === "daily" || !/week/.test(schedule) && !frequency ? "daily" : schedule === "2x/week" || frequency === 2 ? "2x" : schedule === "3x/week" || frequency === 3 ? "3x" : "weekly");
     setProgressLevel(challenge.level ?? (levelMatch === "Medium" || levelMatch === "Hard" ? levelMatch : "Easy"));
     setProgressTarget(String(challenge.targetAmount ?? targetMatch?.[1] ?? ""));
-    setProgressUnit(challenge.targetUnit ?? targetMatch?.[2].trim() ?? "pages");
-    setProgressCustomUnit("");
+    setProgressUnit(knownUnits.includes(storedUnit) ? storedUnit : "custom");
+    setProgressCustomUnit(knownUnits.includes(storedUnit) ? "" : storedUnit);
     setConfirmChallengeDelete(false);
   }
 
@@ -861,7 +863,9 @@ export default function Home() {
           <div className="challenge-list">
             {challenges.map((challenge, index) => {
               const image = challenge.custom ? challenge.image : index < 2 ? challengeImages[gender][index === 0 ? "run" : "read"] : "";
-              return <article className={`challenge-card ${challenge.accent} ${challenge.done ? "is-done" : ""} ${challenge.custom ? "custom-card" : ""}`} key={challenge.id} style={image ? { backgroundImage: `linear-gradient(90deg, rgba(8, 17, 31, .98) 0%, rgba(8, 17, 31, .91) 38%, rgba(8, 17, 31, .31) 100%), url("${image}")` } : undefined}>
+              const coverImage = challenge.image || image;
+              return <article className={`challenge-card ${challenge.accent} ${challenge.done ? "is-done" : ""} ${challenge.custom ? "custom-card" : ""}`} key={challenge.id} style={coverImage ? { backgroundImage: `linear-gradient(90deg, rgba(8, 17, 31, .98) 0%, rgba(8, 17, 31, .91) 38%, rgba(8, 17, 31, .31) 100%), url("${coverImage}")` } : undefined}>
+                <button className="challenge-cover-edit" type="button" onClick={() => openProgressEditor(challenge)} aria-label={`Edit progress for ${challenge.title}`} title="Edit quest progress" />
                 <div className="card-corner" />
                 <div className="reward-tag"><span>✦</span> {challenge.reward} <small>XP</small></div>
                 <div className="challenge-content"><span className="challenge-category">{challenge.custom ? "YOUR QUEST" : index === 0 ? "BODY · MOVEMENT" : index === 1 ? "MIND · LEARNING" : "SOUL · REFLECTION"}</span><h3>{challenge.title}</h3><p className="challenge-subtitle">{challenge.subtitle}</p><div className="challenge-detail"><span>{challenge.detail.split(" · ")[0]}</span><i /> <span>{challenge.detail.split(" · ")[1]}</span><i /> <span>{challenge.done ? "Complete ✓" : challenge.detail.split(" · ")[2]}</span></div></div>
@@ -929,6 +933,71 @@ export default function Home() {
             </fieldset>
             <button className="create-task-submit" type="submit">Create task <Icon name="arrow" size={20} /></button>
           </form>
+        </section>
+      </div>}
+
+      {progressChallengeId && <div className="progress-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProgressChallengeId(null); }}>
+        <section className="progress-editor-screen" role="dialog" aria-modal="true" aria-labelledby="progress-editor-title">
+          <header className="progress-editor-heading">
+            <button className="progress-editor-back" type="button" onClick={() => setProgressChallengeId(null)} aria-label="Back to challenges"><Icon name="back" size={23} /></button>
+            <h2 id="progress-editor-title">Progress</h2>
+            <button className="progress-editor-delete" type="button" onClick={() => setConfirmChallengeDelete(true)} aria-label="Delete challenge"><Icon name="trash" size={22} /></button>
+          </header>
+          <form className="progress-editor-form" onSubmit={updateChallenge}>
+            <label className="progress-editor-label" htmlFor="progress-task-name">Task name</label>
+            <input className="progress-editor-input progress-title-input" id="progress-task-name" name="title" value={progressTitle} onChange={(event) => setProgressTitle(event.currentTarget.value)} maxLength={60} required />
+            <div className="progress-editor-cover">
+              <img src={getTaskCover(progressTitle, gender)} alt={`Cover for ${progressTitle || "challenge"}`} />
+              <span><Icon name="sparkles" size={15} /> Cover updates with task name</span>
+            </div>
+            <label className="progress-editor-field">
+              <span className="progress-editor-label">Time</span>
+              <select name="schedule" value={progressSchedule} onChange={(event) => setProgressSchedule(event.currentTarget.value as "daily" | "weekly" | "2x" | "3x")}>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="2x">2x/Week</option>
+                <option value="3x">3x/Week</option>
+              </select>
+            </label>
+            <label className="progress-editor-field">
+              <span className="progress-editor-label">Level</span>
+              <select name="level" value={progressLevel} onChange={(event) => setProgressLevel(event.currentTarget.value as "Easy" | "Medium" | "Hard")}>
+                <option>Easy</option>
+                <option>Medium</option>
+                <option>Hard</option>
+              </select>
+            </label>
+            <fieldset className="progress-editor-target">
+              <legend className="progress-editor-label">Achievement</legend>
+              <div className="progress-editor-target-row">
+                <input aria-label="Achievement amount" name="target" type="number" min="0.1" step="any" placeholder="Amount..." value={progressTarget} onChange={(event) => setProgressTarget(event.currentTarget.value)} />
+                <span className="progress-editor-divider">/</span>
+                <select name="unit" aria-label="Achievement unit" value={progressUnit} onChange={(event) => setProgressUnit(event.currentTarget.value)}>
+                  <option value="pages">Pages</option>
+                  <option value="km">KM</option>
+                  <option value="minutes">Minutes</option>
+                  <option value="reps">Reps</option>
+                  <option value="glasses">Glasses</option>
+                  <option value="times">Times</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              {progressUnit === "custom" && <input className="progress-editor-custom-unit" aria-label="Custom achievement unit" name="customUnit" value={progressCustomUnit} onChange={(event) => setProgressCustomUnit(event.currentTarget.value)} placeholder="Enter custom unit" maxLength={24} required={Boolean(progressTarget.trim())} />}
+              <small>Enter a target amount and unit for this quest.</small>
+            </fieldset>
+            <button className="progress-editor-update" type="submit">Update <Icon name="check" size={19} /></button>
+          </form>
+          {confirmChallengeDelete && <div className="progress-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmChallengeDelete(false); }}>
+            <section className="progress-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-challenge-title">
+              <div className="progress-delete-icon"><Icon name="trash" size={22} /></div>
+              <h3 id="delete-challenge-title">Delete this quest?</h3>
+              <p>This removes the challenge and its progress from your journey.</p>
+              <div className="progress-delete-actions">
+                <button type="button" onClick={() => setConfirmChallengeDelete(false)}>Keep quest</button>
+                <button type="button" onClick={deleteProgressChallenge}>Delete quest</button>
+              </div>
+            </section>
+          </div>}
         </section>
       </div>}
 
